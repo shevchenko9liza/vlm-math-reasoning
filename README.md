@@ -1,133 +1,49 @@
-# Домашнее задание: VLM для визуально-математического рассуждения
+# VLM Math Reasoning
 
-В этом проекте нужно реализовать упрощённый пайплайн VLM: изображение с графиком, схемой, таблицей или геометрической фигурой + текстовый вопрос -> текстовый ответ.
+A vision-language pipeline for visual math QA — image + question → answer — built from scratch (custom vision-to-text adapter, prompt/label masking, robust benchmark parsing) and evaluated on **MathVista**: Qwen2.5-VL-3B score-mode reaches **0.717 on 540 multiple-choice problems**, with a blank-image ablation proving **+20.7 pp comes from actually seeing the image**.
 
-Задание специально разделено на три уровня данных:
+[Русская версия](README.ru.md)
 
-| Набор | Где лежит | Зачем нужен | Обязательно? |
+![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-MPS-EE4C2C?logo=pytorch&logoColor=white)
+![MathVista](https://img.shields.io/badge/MathVista-0.717%20(n%3D540)-success)
+![Tests](https://img.shields.io/badge/tests-14%2F14%20passing-green)
+
+## What's inside
+
+**A minimal VLM implemented end-to-end** (`hw/`):
+- `dataset.py` — manifest-driven loading, split filtering, RGB image handling.
+- `processor.py` — image resizing/tiling, prompt construction with `<image_start>/<image>/<image_end>` tokens, tokenization with **prompt-token masking in labels**, batch collation.
+- `model.py` — **`VisionToTextAdapter`**: trainable queries + attention pooling + MLP projection; `merge_visual_embeddings` inserts visual embeddings exactly at `<image>` token positions; `MathVLM` with frozen backbones.
+- `train.py` — training loop with loss-finiteness checks and checkpointing.
+- `benchmark.py` — accuracy overall and per subject, with a **robust multiple-choice parser** (`"A"`, `"(B)"`, `"Answer: C"`, `"The correct answer is D."`).
+
+**Adapter-only training on Apple Silicon** (`scripts/`): CLIP ViT-B/32 + Qwen2.5-1.5B-Instruct, both frozen — only a **3.56M-parameter adapter (0.218% of 1.63B)** trains, in 74 seconds on MPS. Honest result: loss fell 1.025 → 0.614, but dev accuracy did not beat the random-adapter baseline on the small train set — analysed rather than hidden (small data + strong LLM text priors + insufficient alignment).
+
+**Real-VLM MathVista evaluation** (`scripts/eval_real_vlm_mathvista.py`): options are scored by **next-token log-probability** instead of fragile text parsing — `invalid_prediction_count = 0` across all runs. MPS-friendly (`--max-image-side 1024` guards against OOM).
+
+## Results
+
+| Run | Dataset | n | Accuracy |
 |---|---|---|---|
-| **toy_math_vqa** | `assets/toy_math_vqa/` | Быстрая проверка, что код, форматы, processor/model/train/benchmark работают | Да |
-| **math_vqa_medium** | `assets/math_vqa_medium/` | Более содержательная синтетическая практика и отчёт без внешних скачиваний | Рекомендуется |
-| **MathVista testmini** | скачивается отдельно с Hugging Face | Проверка качества / benchmark на профильном visual math наборе | Для расширенного трека / бонуса |
+| **Qwen2.5-VL-3B, score-mode** | MathVista testmini MC | **540** | **0.7167** |
+| Same rows, blank-image ablation | MathVista testmini MC | 540 | 0.5093 |
+| **Visual contribution** | — | — | **+20.7 pp** |
+| Trained CLIP+Qwen adapter | strict A–D subset | 22 | 0.500 |
+| Pipeline-format baseline | MathVista MC | 50 | 0.260 |
 
-Главное: **toy-набор не является датасетом для оценки качества**. Он нужен как smoke-check, чтобы public tests быстро запускались на CPU. Для содержательной оценки качества используйте MathVista testmini.
+The blank-image ablation is the key control: it shows the score is not explained by text priors or option distribution — the model genuinely uses the image.
 
-## Треки по железу
-
-| Трек | Ресурс у студента | Что обязательно | Что не обязательно |
-|---|---:|---|---|
-| **A. CPU-only** | GPU нет | Реализовать код, пройти unit/smoke tests на toy-наборе | Обучать VLM до качества |
-| **B. Small GPU** | 6–12 GB VRAM | Adapter-only обучение на маленьком/medium math subset | LoRA и большой benchmark |
-| **C. A100-20GB** | 1/4 A100, около 20 GB VRAM | Adapter pretrain + SFT с LoRA, MathVista eval | Rank 256 и тяжёлый leaderboard |
-
-Основная оценка ставится за корректный инженерный пайплайн. Качество на MathVista/hidden math benchmark используется только для расширенного трека или бонуса.
-
-
-## Оценивание
-
-Задание оценивается в **10 баллов**. Критерии: `dataset.py` — 1.5, `processor.py` — 2.0, `model.py` — 2.0, `train.py` — 1.0, `benchmark.py` — 1.0, public tests — 1.0, отчёт — 1.0. Подробности см. в [`GRADING.md`](GRADING.md).
-
-## Быстрый старт
-
+## Getting started
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
-pytest -q tests_public
-```
-
-Для CPU-трека достаточно добиться прохождения public-тестов и написать короткий отчёт.
-
-## Что нужно реализовать
-
-Файлы с `TODO` находятся в папке `hw/`:
-
-```text
-hw/dataset.py      # загрузка math-VQA примеров
-hw/processor.py    # preprocessing изображений, prompt, labels, collate
-hw/model.py        # adapter, visual-token merge, forward/generate
-hw/train.py        # training loop, сохранение adapter/checkpoint
-hw/benchmark.py    # prompt для benchmark, parse ответа, accuracy
-```
-
-Запрещено менять интерфейсы функций и классов, которые используются в `tests_public/`.
-
-## Данные
-
-### 1. Toy-набор: только проверка работоспособности
-
-```text
-assets/toy_math_vqa/
-  manifest.jsonl
-  images/*.png
-```
-
-Этот набор используется public tests. Он маленький специально: тесты должны быстро запускаться на CPU и в GitHub Actions.
-
-### 2. Medium-набор: локальная практика
-
-```text
-assets/math_vqa_medium/
-  manifest.jsonl
-  images/*.png
-```
-
-Это синтетический набор побольше. Его можно использовать для отчёта, проверки train loop и первых экспериментов без скачивания внешних данных.
-
-### 3. MathVista: проверка качества
-
-MathVista **не включён в репозиторий**. Его нужно скачать отдельно, если вы делаете расширенный трек или quality evaluation:
-
-```bash
-python -m pip install -e ".[ml]"
-python scripts/prepare_mathvista_testmini.py --out assets/mathvista_testmini --max-samples 200
-python -m hw.benchmark --config configs/eval_mathvista_testmini.yaml
-```
-
-Не коммитьте скачанный MathVista в GitHub. Папка `assets/mathvista_testmini/` добавлена в `.gitignore`.
-
-## Команды по трекам
-
-### Track A: CPU-only
-
-```bash
-pytest -q tests_public
+pip install -e ".[ml]"
+python -m pytest              # 14 public tests
 python -m hw.train --config configs/track_a_cpu.yaml --fast-train
-python -m hw.benchmark --config configs/inference_math.yaml --toy
+python scripts/eval_real_vlm_mathvista.py --help
 ```
+See `MATHVISTA_EVAL.md` and `DATA_SOURCES.md` for dataset preparation; `report.md` for the full experiment log and error analysis.
 
-### Track B: Small GPU
+---
+**Keywords:** vision-language model, VLM, multimodal, visual question answering, math reasoning, MathVista, adapter training, CLIP, Qwen, log-probability scoring
 
-```bash
-python -m hw.train --config configs/track_b_small_gpu.yaml
-python -m hw.benchmark --config configs/inference_math.yaml
-```
-
-### Track C: A100-20GB / quality evaluation
-
-```bash
-python -m hw.train --config configs/track_c_a100_pretrain.yaml
-python -m hw.train --config configs/track_c_a100_sft.yaml
-python scripts/prepare_mathvista_testmini.py --out assets/mathvista_testmini --max-samples 1000
-python -m hw.benchmark --config configs/eval_mathvista_testmini.yaml
-```
-
-## Что сдавать
-
-План минимум:
-
-```text
-hw/*.py
-report_template.md
-```
-
-Для GPU-треков дополнительно:
-
-```text
-artifacts/adapter.pt или artifacts/adapter.safetensors
-artifacts/special_tokens.pt, если вы обучали новые visual special tokens
-artifacts/lora или artifacts/model.pt, если вы делали SFT с LoRA
-```
-
-Не добавляйте в репозиторий большие файлы без разрешения преподавателя. Для больших чекпойнтов используйте место сдачи, указанное в LMS.
+**Ключевые слова:** мультимодальные модели, VLM, визуальный вопрос-ответ, математическое рассуждение, MathVista, адаптеры, CLIP, Qwen

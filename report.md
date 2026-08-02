@@ -233,7 +233,3 @@ VRAM: unified memory через MPS
 - Продолжить adapter training на большем synthetic/medium mixture с регулярными ablations: real / blank / shuffled / counterfactual.
 - Для adapter attention добавить scaling 1/sqrt(d) и проверить stability по loss/gradient norms.
 - Запустить LoRA/SFT или adapter fine-tuning на более сильной GPU и сравнить против Qwen2.5-VL score baseline на MathVista.
-
-## Критерии оценивания
-
-См. файл [GRADING.md](GRADING.md).
